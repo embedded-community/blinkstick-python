@@ -3,6 +3,7 @@ import time
 import sys
 import re
 import collections
+from random import randint
 
 if sys.platform == "win32":
     import pywinusb.hid as hid
@@ -11,7 +12,6 @@ else:
     import usb.core
     import usb.util
 
-from random import randint
 
 """
 Main module to control BlinkStick and BlinkStick Pro devices.
@@ -19,6 +19,7 @@ Main module to control BlinkStick and BlinkStick Pro devices.
 
 VENDOR_ID = 0x20a0
 PRODUCT_ID = 0x41e5
+
 
 class BlinkStickException(Exception):
     pass
@@ -304,7 +305,7 @@ class BlinkStick(object):
 
         serial = self.get_serial()
         major = serial[-3]
-        minor = serial[-1]
+        # minor = serial[-1]
 
         if sys.platform == "win32":
             version_attribute = self.device.version_number
@@ -594,7 +595,6 @@ class BlinkStick(object):
         control_string = bytes(bytearray([0x81, count]))
 
         self._usb_ctrl_transfer(0x20, 0x9, 0x81, 0, control_string)
-
 
     def get_led_count(self):
         """
@@ -968,6 +968,7 @@ class BlinkStick(object):
         """
         return self._hex_to_rgb(self._name_to_hex(name))
 
+
 class BlinkStickPro(object):
     """
     BlinkStickPro class is specifically designed to control the individually
@@ -1124,6 +1125,7 @@ class BlinkStickPro(object):
 
         if self.b_led_count > 0:
             self.send_data(2)
+
 
 class BlinkStickProMatrix(BlinkStickPro):
     """
@@ -1627,22 +1629,26 @@ def _remap(value, leftMin, leftMax, rightMin, rightMax):
     # Convert the 0-1 range into a value in the right range.
     return int(rightMin + (valueScaled * rightSpan))
 
+
 def _remap_color(value, max_value):
     return _remap(value, 0, 255, 0, max_value)
 
+
 def _remap_color_reverse(value, max_value):
     return _remap(value, 0, max_value, 0, 255)
+
 
 def _remap_rgb_value(rgb_val, max_value):
     return [_remap_color(rgb_val[0], max_value),
         _remap_color(rgb_val[1], max_value),
         _remap_color(rgb_val[2], max_value)]
 
+
 def _remap_rgb_value_reverse(rgb_val, max_value):
     return [_remap_color_reverse(rgb_val[0], max_value),
         _remap_color_reverse(rgb_val[1], max_value),
         _remap_color_reverse(rgb_val[2], max_value)]
 
+
 def get_blinkstick_package_version():
     return __version__
-
