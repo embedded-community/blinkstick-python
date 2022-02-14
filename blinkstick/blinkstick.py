@@ -3,6 +3,8 @@ import time
 import sys
 import re
 import collections
+from threading import Thread, Event
+from random import randint
 
 if sys.platform == "win32":
     import pywinusb.hid as hid
@@ -11,7 +13,6 @@ else:
     import usb.core
     import usb.util
 
-from random import randint
 
 """
 Main module to control BlinkStick and BlinkStick Pro devices.
@@ -19,6 +20,7 @@ Main module to control BlinkStick and BlinkStick Pro devices.
 
 VENDOR_ID = 0x20a0
 PRODUCT_ID = 0x41e5
+
 
 class BlinkStickException(Exception):
     pass
@@ -205,6 +207,8 @@ class BlinkStick(object):
         @param error_reporting: display errors if they occur during communication with the device
         """
         self.error_reporting = error_reporting
+        self._stop_event = None
+        self._thread = None
 
         if device:
             self.device = device
@@ -304,7 +308,7 @@ class BlinkStick(object):
 
         serial = self.get_serial()
         major = serial[-3]
-        minor = serial[-1]
+        # minor = serial[-1]
 
         if sys.platform == "win32":
             version_attribute = self.device.version_number
@@ -595,7 +599,6 @@ class BlinkStick(object):
 
         self._usb_ctrl_transfer(0x20, 0x9, 0x81, 0, control_string)
 
-
     def get_led_count(self):
         """
         Get number of LEDs for supported devices
@@ -699,6 +702,7 @@ class BlinkStick(object):
         """
         Turns off LED.
         """
+        self.thread_blink_stop()
         self.set_color()
 
     def pulse(self, channel=0, index=0, red=0, green=0, blue=0, name=None, hex=None, repeats=1, duration=1000, steps=50):
@@ -756,6 +760,54 @@ class BlinkStick(object):
             self.set_color(channel=channel, index=index, red=r, green=g, blue=b)
             time.sleep(ms_delay)
             self.set_color(channel=channel, index=index)
+
+    def thread_blink_stop(self):
+        """
+        Stop async blinking
+        """
+        if self._stop_event:
+            self._stop_event.set()
+            self._thread.join()
+            self._thread = None
+            self._stop_event = None
+
+    def thread_blink(self, channel=0, index=0, red=0, green=0, blue=0, name=None, hex=None, delay=500):
+        """
+        Start blinkin in thread until async_blink_stop() is called.
+
+        @type  red: int
+        @param red: Red color intensity 0 is off, 255 is full red intensity
+        @type  green: int
+        @param green: Green color intensity 0 is off, 255 is full green intensity
+        @type  blue: int
+        @param blue: Blue color intensity 0 is off, 255 is full blue intensity
+        @type  name: str
+        @param name: Use CSS color name as defined here: U{http://www.w3.org/TR/css3-color/}
+        @type  hex: str
+        @param hex: Specify color using hexadecimal color value e.g. '#FF3366'
+        @type  delay: int
+        @param delay: time in milliseconds to light LED for, and also between blinks
+        """
+        self.thread_blink_stop()
+        self._stop_event = Event()
+        self._thread = Thread(target=self._thread_blink, args=[channel,
+                                                               index,
+                                                               red,
+                                                               green,
+                                                               blue,
+                                                               name,
+                                                               hex,
+                                                               delay])
+        self._thread.start()
+
+    def _thread_blink(self, channel, index, red, green, blue, name, hex, delay):
+        r, g, b = self._determine_rgb(red=red, green=green, blue=blue, name=name, hex=hex)
+        ms_delay = float(delay) / float(1000)
+        while not self._stop_event.is_set():
+            self.set_color(channel=channel, index=index, red=r, green=g, blue=b)
+            time.sleep(ms_delay)
+            self.set_color(channel=channel, index=index)
+            time.sleep(ms_delay)
 
     def morph(self, channel=0, index=0, red=0, green=0, blue=0, name=None, hex=None, duration=1000, steps=50):
         """
@@ -968,6 +1020,7 @@ class BlinkStick(object):
         """
         return self._hex_to_rgb(self._name_to_hex(name))
 
+
 class BlinkStickPro(object):
     """
     BlinkStickPro class is specifically designed to control the individually
@@ -1124,6 +1177,7 @@ class BlinkStickPro(object):
 
         if self.b_led_count > 0:
             self.send_data(2)
+
 
 class BlinkStickProMatrix(BlinkStickPro):
     """
@@ -1540,6 +1594,7 @@ class BlinkStickProMatrix(BlinkStickPro):
 
         super(BlinkStickProMatrix, self).send_data(channel)
 
+
 def _find_blicksticks(find_all=True):
     if sys.platform == "win32":
         devices = hid.HidDeviceFilter(vendor_id = VENDOR_ID, product_id = PRODUCT_ID).get_devices()
@@ -1552,6 +1607,15 @@ def _find_blicksticks(find_all=True):
 
     else:
         return usb.core.find(find_all=find_all, idVendor=VENDOR_ID, idProduct=PRODUCT_ID)
+
+
+def find_all_serials():
+    """
+    Find all attached BlinkStick device serials
+    @rtype: str[]
+    @return: a list of serial numbers or None if no devices found
+    """
+    return [serial.serial_number for serial in _find_blicksticks()]
 
 
 def find_all():
@@ -1617,22 +1681,26 @@ def _remap(value, leftMin, leftMax, rightMin, rightMax):
     # Convert the 0-1 range into a value in the right range.
     return int(rightMin + (valueScaled * rightSpan))
 
+
 def _remap_color(value, max_value):
     return _remap(value, 0, 255, 0, max_value)
 
+
 def _remap_color_reverse(value, max_value):
     return _remap(value, 0, max_value, 0, 255)
+
 
 def _remap_rgb_value(rgb_val, max_value):
     return [_remap_color(rgb_val[0], max_value),
         _remap_color(rgb_val[1], max_value),
         _remap_color(rgb_val[2], max_value)]
 
+
 def _remap_rgb_value_reverse(rgb_val, max_value):
     return [_remap_color_reverse(rgb_val[0], max_value),
         _remap_color_reverse(rgb_val[1], max_value),
         _remap_color_reverse(rgb_val[2], max_value)]
 
+
 def get_blinkstick_package_version():
     return __version__
-
